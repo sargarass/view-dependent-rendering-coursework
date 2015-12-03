@@ -40,7 +40,7 @@
 
 class ConsoleWriter : public ILogSubscriber {
 public:
-    virtual ~ConsoleWriter();
+    virtual ~ConsoleWriter(){}
     ConsoleWriter() {
         m_showDebug = true;
     }

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 2.8)
+project(VDRender)
 #SET (CMAKE_VERBOSE_MAKEFILE 1)
 find_package(PkgConfig REQUIRED)
 
@@ -30,9 +31,10 @@ include_directories(SYSTEM "extern/cub")
 CUDA_INCLUDE_DIRECTORIES_SYSTEM("extern/cub")
 CUDA_INCLUDE_DIRECTORIES_SYSTEM("extern/")
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+
 set(CMAKE_CXX_FLAGS "-std=c++11 -Wall -Wextra")
-set(CUDA_NVCC_FLAGS "-O3 -gencode=arch=compute_20,code=sm_20 -gencode=arch=compute_30,code=sm_30 -gencode arch=compute_35,code=compute_35 -Xcompiler \"${ARGS_USER_SYSTEM}\"")
-set( PROJECT_NAME "OpenGL" )
+set(CUDA_NVCC_FLAGS "-O3 -gencode=arch=compute_20,code=sm_20 -Xcompiler \"${ARGS_USER_SYSTEM}\"")
 
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/extern/opennurbs)
 file(GLOB_RECURSE SRC_CUDA "src/*.cu" "src/*.cuh")

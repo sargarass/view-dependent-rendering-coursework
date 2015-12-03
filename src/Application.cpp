@@ -17,17 +17,17 @@ void Application::init() {
 
 
     m_triangles = 0;
-    if (!m_killeroo.load("/home/sargarass/Dropbox/Course work/model2/killeroo.bmf")) {
+    if (!m_killeroo.load("../share/models/killeroo.bmf")) {
         Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "", "", "model was not loaded");
         exit(-1);
     }
 
-    if (!m_bigguy.load("/home/sargarass/Dropbox/Course work/model2/bigguy.bmf")) {
+    if (!m_bigguy.load("../share/models/bigguy.bmf")) {
         Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "", "", "model was not loaded");
         exit(-1);
     }
 
-    if (!m_teapot.load("/home/sargarass/Dropbox/Course work/model2/teapot.bmf")) {
+    if (!m_teapot.load("../share/models/teapot.bmf")) {
         Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "", "", "model was not loaded");
         exit(-1);
     }

@@ -173,8 +173,8 @@ void VDRender::init(uint64_t gpuMemorySize) {
 
     m_glPart.buffer.init(m_glPart.vbo);
     printOpenGLError();
-    if (!m_glPart.shader.load("/home/sargarass/Dropbox/Course work/Prototype2/src/BezierPatchVertexShader.glsl",
-                    "/home/sargarass/Dropbox/Course work/Prototype2/src/BezierPatchFragmentShader.glsl")) {
+    if (!m_glPart.shader.load("../share/shaders/BezierPatchVertexShader.glsl",
+                    "../share/shaders/BezierPatchFragmentShader.glsl")) {
         Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "ViewDependentRender", "init",
                                  "shader was not load");
         exit(-1);
