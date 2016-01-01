@@ -100,7 +100,7 @@ void Renderbuffer::changeBufferSettings() {
 }
 
 bool Renderbuffer::setAntialiasing(AntialiasingAlgorithm alg) {
-    if (alg == AntialiasingAlgorithm::CSAA && !LibResouces.getCSAAProperties().isSupported)  {
+    if (alg == AntialiasingAlgorithm::CSAA && !LibResouces::getCSAAProperties().isSupported)  {
         return false;
     }
     m_algorithm = alg;

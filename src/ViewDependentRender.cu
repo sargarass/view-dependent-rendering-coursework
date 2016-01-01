@@ -849,9 +849,9 @@ bool testBackfaceCulling(glm::vec4* corners, VDFrontFace const &face) {
     glm::vec2 d (corners[3].x / corners[3].w, corners[3].y / corners[3].w);
 
     if (face == VDFrontFace::FRONT) {
-        return (signedArea(a,b,c) > 0 && signedArea (c, b, d) > 0);
+        return (signedArea(a, b, c) > 0 && signedArea (c, b, d) > 0);
     }
-    return (signedArea(a,b,c) < 0 && signedArea (c, b, d) < 0);
+    return (signedArea(a, b, c) < 0 && signedArea (c, b, d) < 0);
 }
 
 
