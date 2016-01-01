@@ -15,7 +15,7 @@ public:
     void bind();
     void unbind();
     void flush();
-    void setAntialiasing(AntialiasingAlgorithm alg);
+    bool setAntialiasing(AntialiasingAlgorithm alg);
     bool setCSAAModes(uint mode);
     bool setMSAASamples(uint m_samples);
     uint getMSAAMaxSamples();

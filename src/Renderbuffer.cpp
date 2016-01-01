@@ -99,9 +99,13 @@ void Renderbuffer::changeBufferSettings() {
     }
 }
 
-void Renderbuffer::setAntialiasing(AntialiasingAlgorithm alg) {
+bool Renderbuffer::setAntialiasing(AntialiasingAlgorithm alg) {
+    if (alg == AntialiasingAlgorithm::CSAA && !LibResouces.getCSAAProperties().isSupported)  {
+        return false;
+    }
     m_algorithm = alg;
     m_recalc = true;
+    return true;
 }
 
 void Renderbuffer::setWidth(uint width) {
