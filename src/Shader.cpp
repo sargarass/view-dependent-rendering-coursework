@@ -189,7 +189,7 @@ void Shader::setVal(std::string const &name, double const id)
 void Shader::setVal(std::string const &name, glm::vec2 const &id)
 {
     GLuint location = getUniformLocation(name);
-    glUniform2fv(location,sizeof(glm::vec2),glm::value_ptr(id));
+    glUniform2fv(location, sizeof(glm::vec2), glm::value_ptr(id));
 }
 
 void Shader::setVal(std::string const &name,  glm::vec3 const &id)
@@ -201,7 +201,7 @@ void Shader::setVal(std::string const &name,  glm::vec3 const &id)
 void Shader::setVal(std::string const &name, glm::vec4 const &id)
 {
     GLuint location = getUniformLocation(name);
-    glUniform4f(location,id.r,id.g,id.b,id.a);
+    glUniform4f(location, id.r, id.g, id.b, id.a);
 }
 
 void Shader::setVal4x4(std::string const &name, glm::mat4 const &id)
@@ -213,29 +213,29 @@ void Shader::setVal4x4(std::string const &name, glm::mat4 const &id)
 void Shader::setVal4x4(std::string const &name, float const *id)
 {
     GLuint location = getUniformLocation(name);
-    glUniformMatrix4fv(location,1,GL_FALSE,id);
+    glUniformMatrix4fv(location, 1, GL_FALSE, id);
 }
 
 void Shader::setVal3x3(std::string const &name,float const *id)
 {
     GLuint location = getUniformLocation(name);
-    glUniformMatrix3fv(location,1,GL_FALSE,id);
+    glUniformMatrix3fv(location, 1, GL_FALSE, id);
 }
 
 void Shader::setVal3x3(std::string const &name, glm::mat3 const &id)
 {
     GLuint location = getUniformLocation(name);
-    glUniformMatrix3fv(location,1,GL_FALSE,glm::value_ptr(id));
+    glUniformMatrix3fv(location, 1, GL_FALSE, glm::value_ptr(id));
 }
 
 void Shader::setVal(std::string const &name, float const red, float const green, float const blue, float const alpha)
 {
      GLuint location = getUniformLocation(name);
-     glUniform4f(location,red,green,blue,alpha);
+     glUniform4f(location, red, green, blue, alpha);
 }
 
 void Shader::setVal(std::string const &name, float const x, float const y, float const z)
 {
      GLuint location = getUniformLocation(name);
-     glUniform3f(location,x,y,z);
+     glUniform3f(location, x, y, z);
 }

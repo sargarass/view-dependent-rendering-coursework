@@ -58,6 +58,7 @@ inline void  operator delete[]( void* ptr) {
     {\
         Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "", "printOpenGLError", "%s (%s at %s)", \
                                  gluErrorString(glErr), str, line); \
+        fflush(stdout); \
         exit(-1); \
     } \
 }

@@ -19,7 +19,9 @@ static void glfw_window_init() {
     std::fill(glfw_keyboard_key_press, glfw_keyboard_key_press + 3, PressType::Release);
     LibResouces::glfwInit();
     glfw_keyboard_key_map[GLFW_KEY_ESCAPE] = Keyboard::Escape;
-
+    glfw_keyboard_key_map[GLFW_KEY_LEFT_ALT] = Keyboard::LAlt;
+    glfw_keyboard_key_map[GLFW_KEY_LEFT_BRACKET] = Keyboard::LBracket;
+    glfw_keyboard_key_map[GLFW_KEY_RIGHT_BRACKET] = Keyboard::RBracket;
     glfw_keyboard_key_map[GLFW_KEY_TAB] = Keyboard::Tab;
     glfw_keyboard_key_map[GLFW_KEY_LEFT_SHIFT] = Keyboard::LShift;
     glfw_keyboard_key_map[GLFW_KEY_RIGHT_SHIFT] = Keyboard::RShift;
@@ -121,7 +123,6 @@ void mouseKeyCallback(void *, int button, int action, int) {
     Window &win = SystemManager::getInstance()->window;
     win.mouse.setKey( glfw_mouse_key_map[button], glfw_keyboard_key_press[action]);
     if (win.isApplicationReg()) {
-
         win.m_application->onMouseKeyPress(glfw_mouse_key_map[button]);
     }
 }
@@ -129,6 +130,8 @@ void mouseKeyCallback(void *, int button, int action, int) {
 void resizeWindowCallback(void *, int width, int height) {
     Window &win = SystemManager::getInstance()->window;
     if (win.isApplicationReg()) {
+        win.m_width = width;
+        win.m_height = height;
         win.m_application->onWindowResize(width, height);
     }
 }
@@ -167,8 +170,6 @@ void Window::setSize(int width, int height) {
     }
 }
 bool Window::open(std::string window_name, int width, int height) {
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_DEPTH_BITS, 32);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -179,6 +180,9 @@ bool Window::open(std::string window_name, int width, int height) {
     if (window == nullptr) {
         return false;
     }
+    m_height = height;
+    m_width  = width;
+
     m_handle = reinterpret_cast<uintptr_t>(window);
     glfwMakeContextCurrent(window);
     auto ver_major = glfwGetWindowAttrib(window, GLFW_CONTEXT_VERSION_MAJOR);
@@ -195,6 +199,8 @@ bool Window::open(std::string window_name, int width, int height) {
     glfwSetCursorPosCallback(window, reinterpret_cast<void(*)(GLFWwindow *, double x, double y)>(cursorCallback));
     glfwSwapInterval(0);
     LibResouces::glewInit();
+
+
     return true;
 }
 
@@ -209,6 +215,7 @@ void Window::close() {
         glfwDestroyWindow(reinterpret_cast<GLFWwindow*>(m_handle));
         m_handle = 0;
         m_application = nullptr;
+        m_height = m_width = 0;
     }
 }
 
@@ -235,18 +242,14 @@ void Window::showCursor(bool show) {
 
 int Window::getHeight() {
     if (m_handle) {
-        int width, height;
-        glfwGetWindowSize(reinterpret_cast<GLFWwindow*>(m_handle), &width, &height);
-        return height;
+        return m_height;
     }
     return 0;
 }
 
 int Window::getWidth() {
     if (m_handle) {
-        int width, height;
-        glfwGetWindowSize(reinterpret_cast<GLFWwindow*>(m_handle), &width, &height);
-        return width;
+        return m_width;
     }
     return 0;
 }

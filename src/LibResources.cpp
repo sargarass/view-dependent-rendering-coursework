@@ -7,7 +7,9 @@
 
 bool LibResouces::m_glew_init = false;
 bool LibResouces::m_glfw_init = false;
+CSAAProperties LibResouces::m_csaaProperties;
 CudaProperties *LibResouces::m_cudaProperties = nullptr;
+MSAAProperties LibResouces::m_msaaProperties;
 size_t LibResouces::m_cudaDeviceCount = 0;
 
 void error_callback(int, char const* description) {
@@ -51,6 +53,29 @@ void LibResouces::glewInit() {
     {
         glErr = glGetError();
     } while (glErr != GL_NO_ERROR);
+
+    glGetIntegerv(GL_MAX_SAMPLES, &m_msaaProperties.maxSamples);
+
+    // Поддержка CSAA
+    m_csaaProperties.isSupported = glewIsSupported("GL_NV_framebuffer_multisample_coverage");
+    if (m_csaaProperties.isSupported) {
+        Log::getInstance().write(LOG_MESSAGE_TYPE::INFO,"LibResouces", "glewInit", "CSAA is supported");
+        Log::getInstance().write(LOG_MESSAGE_TYPE::INFO,"LibResouces", "glewInit", "CSAA modes:");
+        GLint numModes;
+        glGetIntegerv(GL_MAX_MULTISAMPLE_COVERAGE_MODES_NV, &numModes);
+        if (numModes)
+        {
+            GLint *modes = new GLint [2 * numModes];
+            glGetIntegerv(GL_MULTISAMPLE_COVERAGE_MODES_NV, modes);
+            m_csaaProperties.modes.resize(numModes);
+            for (GLint i = 0; i < numModes; i++) {
+                m_csaaProperties.modes[i].coverageSamples = modes[2 * i + 0];
+                m_csaaProperties.modes[i].colorSamples = modes[2 * i + 1];
+                Log::getInstance().write(LOG_MESSAGE_TYPE::INFO,"LibResouces", "glewInit", "%d, %d", m_csaaProperties.modes[i].coverageSamples, m_csaaProperties.modes[i].colorSamples);
+            }
+            delete [] modes;
+        }
+    }
 }
 
 void LibResouces::glfwDeinit() {

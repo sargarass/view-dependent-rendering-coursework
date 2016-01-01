@@ -3,6 +3,7 @@
 #include "deque"
 #include "string"
 #include "list"
+#include "inttypes.h"
 
 #define SourcePos() (char const*)(SourcePosition(__FILE__, __LINE__))
 
@@ -22,7 +23,7 @@ public:
     }
 };
 
-enum class LOG_MESSAGE_TYPE {
+enum LOG_MESSAGE_TYPE {
     DEBUG,
     ERROR,
     INFO,
@@ -43,14 +44,18 @@ public:
 
 class Log {
 public:
+    Log();
     void write(LOG_MESSAGE_TYPE type, const std::string &className, const std::string &functionName, const char *format, ...);
     void subscribe(ILogSubscriber *subscriber);
+    void messageTypePushOff(LOG_MESSAGE_TYPE type);
+    void messageTypePushOn(LOG_MESSAGE_TYPE type);
     static Log &getInstance();
 
 private:
     void push(Message& msg);
     std::list<ILogSubscriber*> m_subscribers;
     std::deque<Message> m_queue;
+    uint64_t m_messageMaskType;
 };
 
 extern Log gLog;

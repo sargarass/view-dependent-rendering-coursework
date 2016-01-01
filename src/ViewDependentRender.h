@@ -34,7 +34,8 @@ struct VDRenderStatistics {
     uint64_t kernelScanNanoseconds;
     uint64_t kernelSplitNanoseconds;
     uint64_t glDrawNanoseconds;
-    uint64_t patchesCount;
+    uint64_t patchesCountFinal;
+    uint64_t patchesCountTotalProcessed;
     uint64_t trianglesCount;
     uint64_t total;
     uint64_t maxMemoryQueueSizeInMB;
@@ -43,12 +44,13 @@ struct VDRenderStatistics {
     uint64_t maxMemoryUsedGLBufferInMB;
     uint64_t drawCallsCounter;
     void clear() {
+        patchesCountTotalProcessed = 0;
         kernelMVPNanoseconds = 0;
         kernelOracleNanoseconds = 0;
         kernelScanNanoseconds = 0;
         kernelSplitNanoseconds = 0;
         glDrawNanoseconds = 0;
-        patchesCount = 0;
+        patchesCountFinal = 0;
         trianglesCount = 0;
         total = 0;
         maxMemoryUsedQueueMB = 0;
@@ -60,6 +62,7 @@ struct VDRenderStatistics {
 
 struct OpenGLValues {
     GLuint vbo;
+    GLuint query;
     uint64_t objectsInVBO;
     GLuint vao;
     Shader shader;

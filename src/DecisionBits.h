@@ -2,7 +2,7 @@
 #include "bothInclude.h"
 
 struct DecisionBits {
-    uint16_t arr;
+    int arr;
 
     __host__ __device__
     DecisionBits() { }

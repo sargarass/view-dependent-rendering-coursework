@@ -14,6 +14,7 @@ void Application::init() {
     m_mouse_capture = false;
     show_nurbs = true;
     m_running = false;
+    m_cameraIter = 0;
 
 
     m_triangles = 0;
@@ -36,7 +37,7 @@ void Application::init() {
 
     m_fps = 0;
     Window &window = SystemManager::getInstance()->window;
-    window.open("Application", 1280, 700);
+    window.open("Application", 1600, 1200);
     window.mouse.setMousePosition(window.getWidth() / 2, window.getHeight() / 2);
     window.regApplication(this);
 
@@ -53,12 +54,15 @@ void Application::init() {
     glShadeModel(GL_SMOOTH);
 
     SystemManager::getInstance()->stackAllocator.resize(512UL * 1024UL * 1024UL);
-    SystemManager::getInstance()->vdRender.init(58UL * 1024UL * 1024UL);
+    SystemManager::getInstance()->vdRender.init(256UL * 1024UL * 1024UL);
 
     SystemManager::getInstance()->vdRender.loadPatches("killeroo", m_killeroo.getPatchesPtr(), m_killeroo.getSize());
     SystemManager::getInstance()->vdRender.loadPatches("bigguy", m_bigguy.getPatchesPtr(), m_bigguy.getSize());
     SystemManager::getInstance()->vdRender.loadPatches("teapot", m_teapot.getPatchesPtr(), m_teapot.getSize());
+    m_modelIter = 0;
+    m_modelNum = 3;
     SystemManager::getInstance()->window.setVSync(false);
+    m_renderbuffer.init();
 }
 
 void Application::save() {
@@ -70,6 +74,46 @@ void Application::save() {
     fwrite(this, sizeof(Application), 1, file);
     fclose(file);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "save", "settings were saved!");
+}
+void Application::clearCameraList() {
+    m_cameraList.clear();
+}
+
+void Application::saveCamera() {
+    m_cameraList.push_back(m_camera);
+    FILE* file = fopen("camera_bd.bin", "wb");
+    if (!file) {
+        Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "Application", "saveCamera", "file was not opened!");
+        return;
+    }
+
+    int it = 0;
+    size_t size = m_cameraList.size();
+    fwrite(&size, sizeof(size_t), 1, file);
+    for (auto& cam : m_cameraList) {
+        fwrite(&cam, sizeof(Camera), 1, file);
+        it++;
+    }
+
+    fclose(file);
+    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "saveCamera", "settings were saved!");
+}
+
+void Application::loadCamera() {
+    FILE* file = fopen("camera_bd.bin", "rb");
+    if (!file) {
+        Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "Application", "load", "file is not existing!");
+        return;
+    }
+    size_t size;
+    fread(&size, sizeof(size_t), 1, file);
+    m_cameraList.clear();
+    for (int i = 0; i < size; i++) {
+        Camera camera;
+        fread(&camera, sizeof(Camera), 1, file);
+        m_cameraList.push_back(camera);
+    }
+    fclose(file);
 }
 
 void Application::load() {
@@ -99,65 +143,75 @@ void Application::load() {
 
     }
     fclose(file);
-
+    loadCamera();
 }
 
 void Application::deinit() {
     m_running = false;
     m_fps = 0;
+    m_renderbuffer.deinit();
 }
 
-void Application::render() {
-    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "Begin frame:");
-
+void Application::renderModel(glm::mat4 const &PV) {
+    glm::mat4 MVP = PV;
+    glm::mat4 modelMatrix;
     Window &window = SystemManager::getInstance()->window;
+    switch(m_modelIter) {
+        case 0:
+            modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(2, 2, 2));
+            MVP = PV * modelMatrix;
+            SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::FRONT);
+            SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
+            SystemManager::getInstance()->vdRender.render("killeroo", 0.5);
+            break;
+        case 1:
+            SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::BACK);
+            modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::rotate(modelMatrix, 180.0f, glm::vec3(0, 1, 0));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(40, 40, 40));
+            MVP = PV * modelMatrix;
+            SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
+            SystemManager::getInstance()->vdRender.render("bigguy", 0.5);
+            break;
+        case 2:
+            SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::NONE);
+            modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::rotate(modelMatrix, 90.0f, glm::vec3(0, 1, 0));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(40, 40, 40));
+            MVP = PV * modelMatrix;
+            SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
+            SystemManager::getInstance()->vdRender.render("teapot", 0.5);
+            break;
+    }
+}
+
+
+void Application::render() {
     glEnable(GL_DEPTH_TEST);
     if (!m_fill) {
         SystemManager::getInstance()->vdRender.setFill(VDFill::LINES);
     } else {
         SystemManager::getInstance()->vdRender.setFill(VDFill::FILL);
     }
+   // Log::getInstance().messageTypePushOff(LOG_MESSAGE_TYPE::DEBUG);
     glDisable(GL_CULL_FACE);
     glEnable(GL_MULTISAMPLE);
+    m_renderbuffer.bind();
 
     glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     SystemManager::getInstance()->vdRender.beginFrame();
 
-    glm::mat4 killerooModelMatrix = glm::mat4(1.0f);
-    killerooModelMatrix = glm::scale(killerooModelMatrix, glm::vec3(2, 2, 2));
-    //model = glm::rotate(model, 90.0f, glm::vec3(1, 0, 0));
-
     glm::mat4 view = m_camera.getViewMatrix();
     glm::mat4 perspective = m_camera.getProjectionMatrix();
     glm::mat4 PV = perspective * view;
 
+    renderModel(PV);
 
-    glm::mat4 MVP = PV * killerooModelMatrix;
-    SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::FRONT);
-    SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
-
-    SystemManager::getInstance()->vdRender.render("killeroo", 0.5);
-
-    SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::BACK);
-    glm::mat4 bigguyModelMatrix = glm::mat4(1.0f);
-    bigguyModelMatrix = glm::translate(bigguyModelMatrix, glm::vec3(m_killeroo.box.min.x - 200, m_killeroo.box.min.y, m_killeroo.box.min.z));
-    bigguyModelMatrix = glm::rotate(bigguyModelMatrix, 180.0f, glm::vec3(0, 1, 0));
-    bigguyModelMatrix = glm::scale(bigguyModelMatrix, glm::vec3(40, 40, 40));
-    MVP = PV * bigguyModelMatrix;
-    SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
-    SystemManager::getInstance()->vdRender.render("bigguy", 0.5);
-
-    SystemManager::getInstance()->vdRender.setFrontFace(VDFrontFace::NONE);
-    glm::mat4 teapotModelMatrix = glm::mat4(1.0f);
-    teapotModelMatrix = glm::translate(teapotModelMatrix, glm::vec3(m_killeroo.box.max.x + 200, m_killeroo.box.min.y, m_killeroo.box.min.z));
-    teapotModelMatrix = glm::rotate(teapotModelMatrix, 90.0f, glm::vec3(0, 1, 0));
-    teapotModelMatrix = glm::scale(teapotModelMatrix, glm::vec3(40, 40, 40));
-    MVP = PV * teapotModelMatrix;
-    SystemManager::getInstance()->vdRender.updateParameters(MVP, window.getWidth(), window.getHeight());
-    SystemManager::getInstance()->vdRender.render("teapot", 0.5);
     SystemManager::getInstance()->vdRender.endFrame();
-
+    m_renderbuffer.flush();
+    m_renderbuffer.unbind();
     VDRenderStatistics statistics = SystemManager::getInstance()->vdRender.getFrameStatistics();
     m_triangles += statistics.trianglesCount;
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "Frame render statistics:");
@@ -167,7 +221,8 @@ void Application::render() {
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "kernelSplit: %f ms", statistics.kernelSplitNanoseconds / 1000000.0f);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "glDraw: %f ms", statistics.glDrawNanoseconds / 1000000.0f);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "summary: %f ms", statistics.total / 1000000.0f);
-    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "patches count: %zu", statistics.patchesCount);
+    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "patches count: %zu", statistics.patchesCountFinal);
+    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "patches count processed: %zu", statistics.patchesCountTotalProcessed);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "triangles count: %zu", statistics.trianglesCount);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "max memory queue size: %zu mb", statistics.maxMemoryQueueSizeInMB);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "max memory glBuffer size: %zu mb", statistics.maxMemoryGLBufferSizeInMB);
@@ -175,6 +230,7 @@ void Application::render() {
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "max memory used glBuffer: %zu mb", statistics.maxMemoryUsedGLBufferInMB);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "glDrawCallsCounter: %zu ", statistics.drawCallsCounter);
     Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "render", "End frame:");
+    //Log::getInstance().messageTypePushOn(LOG_MESSAGE_TYPE::DEBUG);
 }
 
 void Application::update() {
@@ -191,6 +247,7 @@ void Application::run() {
         m_frameIntervalTimer.start();
 
         if (!pause) {
+
             render();
             window.flush();
         }
@@ -288,6 +345,124 @@ void Application::onKeyboardKeyPress(Keyboard::Key key) {
             m_showDebug = !m_showDebug;
             ConsoleWriter::getInstance().showDebug(m_showDebug);
             break;
+        case Keyboard::Up:
+            m_modelIter++;
+            if (m_modelIter >= m_modelNum) {
+                m_modelIter = 0;
+            }
+            break;
+        case Keyboard::Down:
+            m_modelIter--;
+            if (m_modelIter < 0) {
+                m_modelIter = m_modelNum - 1;
+            }
+            break;
+        case Keyboard::C:
+            saveCamera();
+            break;
+        case Keyboard::X:
+            loadCamera();
+            break;
+        case Keyboard::Z:
+            clearCameraList();
+            break;
+        case Keyboard::Right:
+            m_cameraIter++;
+            if (m_cameraIter >= m_cameraList.size()) {
+                m_cameraIter = 0;
+            }
+            if (m_cameraList.size() > 0) {
+                m_camera = m_cameraList[m_cameraIter];
+            }
+            break;
+        case Keyboard::Left:
+            m_cameraIter--;
+            if (m_cameraIter < 0) {
+                m_cameraIter = m_cameraList.size() - 1;
+            }
+            if (m_cameraList.size() > 0) {
+                m_camera = m_cameraList[m_cameraIter];
+            }
+            break;
+        case Keyboard::LBracket:
+            switch (m_renderbuffer.getAntialiasingAlgorithm()) {
+                case AntialiasingAlgorithm::NONE:
+                    break;
+                case AntialiasingAlgorithm::MSAA:
+                    do {
+                        int msaa_samples = m_renderbuffer.getMSAASamples();
+                        msaa_samples--;
+                        if (msaa_samples < 1) {
+                            msaa_samples = 1;
+                        }
+                        m_renderbuffer.setMSAASamples(msaa_samples);
+                    } while(0);
+                    break;
+                case AntialiasingAlgorithm::CSAA:
+                    do {
+                        int csaa_mode = m_renderbuffer.getCSAAMode();
+                        csaa_mode--;
+                        if (csaa_mode < 0) {
+                            csaa_mode = 0;
+                        }
+                        m_renderbuffer.setCSAAModes(csaa_mode);
+                    } while(0);
+                    break;
+                default:
+                    break;
+            }
+            break;
+            break;
+        case Keyboard::RBracket:
+            switch (m_renderbuffer.getAntialiasingAlgorithm()) {
+                case AntialiasingAlgorithm::NONE:
+                    break;
+                case AntialiasingAlgorithm::MSAA:
+                    do {
+                        int msaa_samples = m_renderbuffer.getMSAASamples();
+                        msaa_samples++;
+                        if (msaa_samples > m_renderbuffer.getMSAAMaxSamples()) {
+                            msaa_samples = m_renderbuffer.getMSAAMaxSamples();
+                        }
+                        m_renderbuffer.setMSAASamples(msaa_samples);
+                    } while(0);
+                    break;
+                case AntialiasingAlgorithm::CSAA:
+                    do {
+                        int csaa_mode = m_renderbuffer.getCSAAMode();
+                        csaa_mode++;
+                        if (csaa_mode >= m_renderbuffer.getCSAAModes().size()) {
+                            csaa_mode = m_renderbuffer.getCSAAModes().size() - 1;
+                        }
+                        m_renderbuffer.setCSAAModes(csaa_mode);
+                    } while(0);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case Keyboard::LAlt:
+            switch (m_renderbuffer.getAntialiasingAlgorithm()) {
+                case AntialiasingAlgorithm::NONE:
+                    m_renderbuffer.setAntialiasing(AntialiasingAlgorithm::MSAA);
+                    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "onKeyboardKeyPress",
+                                             "Antialiasing algorithm = MSAA samples %d", m_renderbuffer.getMSAASamples());
+                    break;
+                case AntialiasingAlgorithm::MSAA:
+                    m_renderbuffer.setAntialiasing(AntialiasingAlgorithm::CSAA);
+                    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "onKeyboardKeyPress",
+                                             "Antialiasing algorithm = CSAA %d, %d",
+                                             m_renderbuffer.getCSAAModes()[m_renderbuffer.getCSAAMode()].coverageSamples,
+                                             m_renderbuffer.getCSAAModes()[m_renderbuffer.getCSAAMode()].colorSamples);
+                    break;
+                case AntialiasingAlgorithm::CSAA:
+                    m_renderbuffer.setAntialiasing(AntialiasingAlgorithm::NONE);
+                    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "Application", "onKeyboardKeyPress",
+                                             "Antialiasing algorithm = NONE");
+                    break;
+                default:
+                    break;
+            }
         default:
             break;
     }
@@ -296,6 +471,9 @@ void Application::onKeyboardKeyPress(Keyboard::Key key) {
 void Application::onWindowResize(int width, int height) {
     glViewport(0, 0, width, height);
     m_camera.setProjection(45.0, (static_cast<double>(width))/(static_cast<double>(height)), 0.0001, 1000.0);
+    m_renderbuffer.setWidth(width);
+    m_renderbuffer.setHeight(height);
+
 }
 
 void Application::onMouseMove(int x, int y) {

@@ -4,26 +4,28 @@
 #include "string.h"
 
 void Log::write(LOG_MESSAGE_TYPE type, std::string const &className, std::string const &functionName, const char *format, ...) {
-    Message msg = {"" , type};
+    if (m_messageMaskType & (1UL << type)) {
+        Message msg = {"" , type};
 
-    std::string tmp;
-    tmp.resize(256);
+        std::string tmp;
+        tmp.resize(256);
 
-    va_list arglist;
-    va_start( arglist, format );
-    vsnprintf(&tmp[0], 255, format, arglist);
-    va_end( arglist );
+        va_list arglist;
+        va_start( arglist, format );
+        vsnprintf(&tmp[0], 255, format, arglist);
+        va_end( arglist );
 
 
-    if (className != "") {
-        msg.text += className + "::";
+        if (className != "") {
+            msg.text += className + "::";
+        }
+
+        if (functionName != "") {
+            msg.text += functionName + "(): ";
+        }
+        msg.text  += tmp;
+        push(msg);
     }
-
-    if (functionName != "") {
-        msg.text += functionName + "(): ";
-    }
-    msg.text  += tmp;
-    push(msg);
 }
 
 void Log::push(Message &msg) {
@@ -40,6 +42,18 @@ void Log::push(Message &msg) {
 
 void Log::subscribe(ILogSubscriber *subscriber) {
     m_subscribers.push_back(subscriber);
+}
+
+void Log::messageTypePushOff(LOG_MESSAGE_TYPE type) {
+    m_messageMaskType ^= (1UL << type);
+}
+
+void Log::messageTypePushOn(LOG_MESSAGE_TYPE type) {
+    m_messageMaskType |= (1UL << type);
+}
+
+Log::Log() {
+    m_messageMaskType = 0xFFFFFFFFFFFFFFFFUL;
 }
 
 Log &Log::getInstance()  {

@@ -5,13 +5,35 @@
 
 #define DEGREE 4
 #define NUM_COMP 4
-#define NUM_POINTS (16)
+#define NUM_POINTS 16
 #define HELP_ARRAYS_COUNT 6
-#define NUM_THREADS 512
-#define PATCHPERBLOCK NUM_THREADS / 16
+
+#define NUM_THREADS_MVP 1024
+#define NUM_PATCHES_MVP ((NUM_THREADS_MVP) / 16)
+
+#define NUM_THREADS_SPLIT 128
+#define NUM_PATCHES_SPLIT ((NUM_THREADS_SPLIT) / 16)
+
+#define NUM_THREADS_ORACLE 192
+#define NUM_PATCHES_ORACLE ((NUM_THREADS_ORACLE) / 16)
+
+#define NUM_THREADS_WITHOUT_SHARED 1024
+#define NUM_PATCHES_WITHOUT_SHARED ((NUM_THREADS_WITHOUT_SHARED) / 16)
+
+#define NUM_THREADS_WITH_SHARED 256
+#define NUM_PATCHES_WITH_SHARED ((NUM_THREADS_WITH_SHARED) / 16)
+
 #define SQR(x) ((x) * (x))
 #define NUM_TRIANGLES_IN_PATCH (sizeof(Triangles) / sizeof(glm::vec4) / 3)
 #define NUM_POINTS_IN_TRIANGLES (NUM_TRIANGLES_IN_PATCH * 3)
+
+#define X 0
+#define Y 1
+#define Z 2
+#define W 3
+
+#define GET_COMP(patch, point, comp) patch[(comp) * NUM_POINTS + (point)]
+
 __constant__ float gSLU[4][4];
 __constant__ float gSRU[4][4];
 __constant__ float gSLV[4][4];
@@ -20,10 +42,13 @@ __constant__ float gSRV[4][4];
 __constant__ float gMVP[4][4];
 __constant__ float gIMVP[4][4];
 __constant__ float gClipSpacePlanes[6][4];
-__constant__ uint32_t gWidth;
-__constant__ uint32_t gHeight;
+__constant__ float gWidth;
+__constant__ float gHeight;
 
 __constant__ uint8_t triangleThreadPointChooser[NUM_POINTS_IN_TRIANGLES];
+__constant__ uint8_t triangleThreadPointChooser2[NUM_POINTS_IN_TRIANGLES];
+__constant__ uint8_t triangleThreadPointChooser3[NUM_POINTS_IN_TRIANGLES];
+
 __constant__ uint8_t edgeThreadPointChooser[((DEGREE - 2) * 4) * 3];
 
 #pragma pack(push, 1)
@@ -41,17 +66,17 @@ struct PatchPointer{
 #pragma pack(pop)
 
 
-__device__ __inline__
+static __device__ __inline__
 float cuda_min(float a, float b) {
     return (a < b)? a : b;
 }
 
-__device__ __inline__
+static __device__ __inline__
 float cuda_max(float a, float b) {
     return (a < b)? b : a;
 }
 
-__device__ __inline__
+static __device__ __inline__
 void warpReduceMin(volatile float *memory) {
     int idx = threadIdx.y * 4 + threadIdx.x;
     if (idx < 8) {
@@ -62,7 +87,7 @@ void warpReduceMin(volatile float *memory) {
     }
 }
 
-__device__ __inline__
+static __device__ __inline__
 void warpReduceMax(volatile float *memory) {
     int idx = threadIdx.y * 4 + threadIdx.x;
     if (idx < 8) {
@@ -73,7 +98,7 @@ void warpReduceMax(volatile float *memory) {
     }
 }
 
-__device__ __inline__
+static __device__ __inline__
 void warpReduceOr(volatile uint32_t *memory) {
     int idx = threadIdx.y * 4 + threadIdx.x;
     if (idx < 8) {
@@ -84,7 +109,7 @@ void warpReduceOr(volatile uint32_t *memory) {
     }
 }
 
-__device__ __inline__
+static __device__ __inline__
 void warpReduceAnd(volatile uint32_t *memory) {
     int idx = threadIdx.y * 4 + threadIdx.x;
     if (idx < 8) {
@@ -96,26 +121,26 @@ void warpReduceAnd(volatile uint32_t *memory) {
 }
 
 
-__device__ __inline__
+static __device__ __inline__
 float clamp(float v, float min, float max) {
-    return cuda_max(cuda_min(v, max), min);
+    return fmaxf(fminf(v, max), min);
 }
 
-__device__ __inline__
-float linearInterpolation(float const &a, float const &b, float t) {
+static __device__ __inline__
+float linearInterpolation(float const &a, float const &b, float const t) {
     return (1.0f - t) * a + t * b;
 }
 
-__device__ __inline__
-glm::vec2 linearInterpolation2D(glm::vec2 const &a, glm::vec2 const b, float t) {
+static __device__ __inline__
+glm::vec2 linearInterpolation2D(glm::vec2 const &a, glm::vec2 const b, float const t) {
     glm::vec2 res;
     res.x = (1.0 - t) * a.x + t * b.x;
     res.y = (1.0 - t) * a.y + t * b.y;
     return res;
 }
 
-__device__ __inline__
-glm::vec4 linearInterpolation4D(glm::vec4 const &a, glm::vec4 const b, float t) {
+static __device__ __inline__
+glm::vec4 linearInterpolation4D(glm::vec4 const &a, glm::vec4 const &b, float const &t) {
     glm::vec4 res;
     res.x = (1.0 - t) * a.x + t * b.x;
     res.y = (1.0 - t) * a.y + t * b.y;
@@ -125,8 +150,8 @@ glm::vec4 linearInterpolation4D(glm::vec4 const &a, glm::vec4 const b, float t) 
 }
 
 
-__device__ __inline__
-glm::vec4 bilinearInterpolation4D(float u, float v, glm::vec4 &a, glm::vec4 &b, glm::vec4 &c, glm::vec4 &d) {
+static __device__
+glm::vec4 bilinearInterpolation4D(float const u, float const v, glm::vec4 const &a, glm::vec4 const &b, glm::vec4 const &c, glm::vec4 const &d) {
     glm::vec4 tmp = linearInterpolation4D(a, b, u);
     glm::vec4 tmp2 = linearInterpolation4D(c, d, u);
     return linearInterpolation4D(tmp, tmp2, v);
@@ -167,10 +192,12 @@ void VDRender::init(uint64_t gpuMemorySize) {
         exit(-1);
     }
 
-    glBindBuffer(GL_ARRAY_BUFFER, m_glPart.vbo);
-    glBufferData(GL_ARRAY_BUFFER, m_settings.maxQueueSize * openGLObjects, NULL, GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
+    glGenQueries(1, &m_glPart.query);
+    if (m_glPart.query == 0) {
+        Log::getInstance().write(LOG_MESSAGE_TYPE::ERROR, "ViewDependentRender", "init", "glGenBuffers == NULL at %s", SourcePos());
+        exit(-1);
+    }
+    glNamedBufferDataEXT(m_glPart.vbo, m_settings.maxQueueSize * openGLObjects, NULL, GL_DYNAMIC_DRAW);
     m_glPart.buffer.init(m_glPart.vbo);
     printOpenGLError();
     if (!m_glPart.shader.load("../share/shaders/BezierPatchVertexShader.glsl",
@@ -191,7 +218,7 @@ void VDRender::init(uint64_t gpuMemorySize) {
                       {3.0f / 8.0f, 1.0f/2.0f, 1.0f / 2.0f, 0.0f},
                       {1.0f / 8.0f, 1.0f/4.0f, 1.0f / 2.0f, 1.0f}};
 
-    float SLV[4][4] = {{1.0f,     0.0f,                      0,    },
+    float SLV[4][4] = {{1.0f,     0.0f,          0,          0    },
                       {1.0f/2.0f, 1.0f/2.0f,     0,          0     },
                       {1.0f/4.0f, 1.0/2.0f,  1.0f/4.0f,     0.0f   },
                       {1.0f/8.0f, 3.0f/8.0f, 3.0f/8.0f, 1.0f / 8.0f}};
@@ -207,6 +234,18 @@ void VDRender::init(uint64_t gpuMemorySize) {
                                    {0, 1, 4, 4, 1, 5, 1, 2, 5, 5, 2, 6, 2, 3, 6, 6, 3, 7, 4, 5, 8,
                                    8, 5, 9, 5, 6, 9, 9, 6, 10, 6, 7, 10, 10, 7, 11, 8, 9, 12, 12,
                                    9, 13, 9, 10, 13, 13, 10, 14, 10, 11, 14, 14, 11, 15};
+    uint8_t trianglePointChooser2[18 * 3] = {
+        1, 0, 0, 1, 4, 4, 2, 1, 1, 2, 5, 5, 3, 2, 2, 3, 6, 6, 5,
+        4, 4, 5, 8, 8, 6, 5, 5, 6, 9, 9, 7, 6, 6, 7, 10, 10, 9,
+        8, 8, 9, 12, 12, 10, 9, 9, 10, 13, 13, 11, 10, 10, 11, 14, 14
+    };
+
+    uint8_t trianglePointChooser3[18 * 3] = {
+        4, 4, 1, 5, 5, 1, 5, 5, 2, 6, 6, 2, 6, 6, 3, 7, 7, 3, 8,
+        8, 5, 9, 9, 5, 9, 9, 6, 10, 10, 6, 10, 10, 7, 11, 11, 7, 12,
+        12, 9, 13, 13, 9, 13, 13, 10, 14, 14, 10, 14, 14, 11, 15, 15, 11
+    };
+
     uint8_t edgePointChooser[8 * 3] = {1, 2, 4,  8,  7,  11, 13, 14,
                                        0, 0, 0,  0,  3,  3,  12, 12,
                                        3, 3, 12, 12, 15, 15, 15, 15};
@@ -216,14 +255,20 @@ void VDRender::init(uint64_t gpuMemorySize) {
     cudaMemcpyToSymbol(gSLV, SLV, sizeof(float) * 16);
     cudaMemcpyToSymbol(gSRV, SRV, sizeof(float) * 16);
     cudaMemcpyToSymbol(triangleThreadPointChooser, trianglePointChooser, sizeof(uint8_t) * 18 * 3);
+    cudaMemcpyToSymbol(triangleThreadPointChooser2, trianglePointChooser2, sizeof(uint8_t) * 18 * 3);
+    cudaMemcpyToSymbol(triangleThreadPointChooser3, trianglePointChooser3, sizeof(uint8_t) * 18 * 3);
+
     cudaMemcpyToSymbol(edgeThreadPointChooser, edgePointChooser, sizeof(uint8_t) * 8 * 3);
     glm::vec4 clipSpacePlanes[6] = {{1, 0, 0, 1.0000001},{-1, 0, 0, 1.0000001},{0, 1, 0, 1.0000001}, {0, -1, 0, 1.0000001}, {0, 0, 1, 1.0000001}, {0, 0, -1, 1.0000001}};
     cudaMemcpyToSymbol(gClipSpacePlanes, clipSpacePlanes, sizeof(glm::vec4) * 6);
 }
 
 static dim3 gridConfigure(uint64_t problemSize, dim3 block) {
-    dim3 MaxGridDim = {(uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[0], (uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[1], (uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[2]};
+    dim3 MaxGridDim = {(uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[0],
+                       (uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[1],
+                       (uint)LibResouces::getCudaProperties(0).maxGridDimensionSize[2]};
     dim3 gridDim = {1, 1, 1};
+
     uint64_t blockSize = block.x * block.y * block.z;
     // По z
     if (problemSize > MaxGridDim.y * MaxGridDim.x * blockSize) {
@@ -258,6 +303,9 @@ void VDRender::deinit() {
     if (m_glPart.vao) {
         glDeleteVertexArrays(1, &m_glPart.vao);
         m_glPart.vao = 0;
+    }
+    if (m_glPart.query) {
+        glDeleteQueries(1, &m_glPart.query);
     }
     m_glPart.buffer.deinit();
 
@@ -300,12 +348,12 @@ void VDRender::updateParameters(glm::mat4 const &MVP, uint32_t const &width, uin
             tIMPV[j][i] = IMVP[i][j];
         }
     }
+    float fwidth = width;
+    float fheight = height;
     cudaMemcpyToSymbol(gMVP, tMPV, sizeof(float) * 16);
     cudaMemcpyToSymbol(gIMVP, tIMPV, sizeof(float) * 16);
-    cudaMemcpyToSymbol(gWidth, &width, sizeof(uint32_t));
-    cudaMemcpyToSymbol(gHeight, &height, sizeof(uint32_t));
-
-
+    cudaMemcpyToSymbol(gWidth, &fwidth, sizeof(float));
+    cudaMemcpyToSymbol(gHeight, &fheight, sizeof(float));
 }
 
 void VDRender::setFill(VDFill fillMode) {
@@ -317,18 +365,15 @@ void VDRender::setFrontFace(VDFrontFace face) {
 }
 
 void VDRender::drawGL(uint64_t size, uint64_t level) {
-    GLuint query;
     GLuint64 elapsed_time;
-    glGenQueries(1, &query);
-    glBeginQuery(GL_TIME_ELAPSED, query);
+    glBeginQuery(GL_TIME_ELAPSED, m_glPart.query);
 
     printOpenGLError();
     uint64_t patches = size;
     size = size * NUM_POINTS_IN_TRIANGLES;
     m_glPart.shader.bind();
-    m_glPart.shader.setVal("color", glm::vec4(1.0f / level, 0.0, 0.0, 1.0f));
+    m_glPart.shader.setVal("color", glm::vec4(1.0 / level, 0, 0, 1.0f));
     glBindVertexArray(m_glPart.vao);
-
     glBindBuffer(GL_ARRAY_BUFFER, m_glPart.vbo);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, NUM_COMP, GL_FLOAT, GL_FALSE, 0, 0);
@@ -342,11 +387,6 @@ void VDRender::drawGL(uint64_t size, uint64_t level) {
     }
     glDrawArrays(GL_TRIANGLES, 0, size);
 
-
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    glDrawArrays(GL_TRIANGLES, 0, size);
-    glDisableVertexAttribArray(0);
-
     glBindVertexArray(0);
     m_glPart.shader.unbind();
 
@@ -354,19 +394,18 @@ void VDRender::drawGL(uint64_t size, uint64_t level) {
 
     int done = 0;
     while (!done) {
-        glGetQueryObjectiv(query, GL_QUERY_RESULT_AVAILABLE, &done);
+        glGetQueryObjectiv(m_glPart.query, GL_QUERY_RESULT_AVAILABLE, &done);
     }
-    glGetQueryObjectui64v(query, GL_QUERY_RESULT, &elapsed_time);
-    glDeleteQueries(1, &query);
+    glGetQueryObjectui64v(m_glPart.query, GL_QUERY_RESULT, &elapsed_time);
     printOpenGLError();
 
     m_statistics.glDrawNanoseconds += elapsed_time;
-    m_statistics.patchesCount += patches;
+    m_statistics.patchesCountFinal += patches;
     m_statistics.trianglesCount += NUM_TRIANGLES_IN_PATCH * patches;
     m_statistics.drawCallsCounter++;
 }
 
-__device__ __inline__
+static __device__ __inline__
 uint64_t getGlobalIdx3DZ() {
     uint64_t blockId = blockIdx.x
                  + blockIdx.y * gridDim.x
@@ -374,7 +413,7 @@ uint64_t getGlobalIdx3DZ() {
     return blockId * blockDim.z + threadIdx.z;
 }
 
-__device__ __inline__
+static __device__ __inline__
 uint64_t getGlobalIdx3DZXY()
 {
     uint64_t blockId = blockIdx.x
@@ -386,27 +425,28 @@ uint64_t getGlobalIdx3DZXY()
               + threadIdx.x;
 }
 
-__device__ __inline__
+static __device__ __inline__
 uint64_t getIdx() {
     return threadIdx.y * DEGREE + threadIdx.x;
 }
 
-__global__
-void kernelTransfer(RenderModel dest, BezierPatch* src, uint64_t size) {
+static __global__
+void kernelTransfer(RenderModel dest, BezierPatch const * const src, uint64_t const size) {
     uint64_t patchId = getGlobalIdx3DZ();
     if (patchId >= size) {
         return;
     }
     uint64_t idx = getIdx();
+    uint64_t patchOut = patchId * NUM_POINTS + idx;
 
-    dest.x[patchId * NUM_POINTS + idx] = src[patchId].row[idx].x;
-    dest.y[patchId * NUM_POINTS + idx] = src[patchId].row[idx].y;
-    dest.z[patchId * NUM_POINTS + idx] = src[patchId].row[idx].z;
-    dest.w[patchId * NUM_POINTS + idx] = src[patchId].row[idx].w;
+    dest.x[patchOut] = src[patchId].row[idx].x;
+    dest.y[patchOut] = src[patchId].row[idx].y;
+    dest.z[patchOut] = src[patchId].row[idx].z;
+    dest.w[patchOut] = src[patchId].row[idx].w;
 }
 
 void VDRender::runKernelTransfer(RenderModel &dest, BezierPatch* src, uint64_t size) {
-    size_t patches = PATCHPERBLOCK;
+    size_t patches = NUM_PATCHES_WITHOUT_SHARED;
     dim3 block = dim3(DEGREE, DEGREE, patches);
     dim3 gridDim = gridConfigureZ(size, block);
     kernelTransfer<<<gridDim, block>>>(dest, src, size);
@@ -453,28 +493,26 @@ bool VDRender::loadPatches(std::string const modelName, BezierPatch const *ramPa
     return true;
 }
 
-__device__ __inline__
-float cudaDot4D(float const *a, float const *b) {
+static __device__ __inline__
+float cudaDot4D(float const * const a, glm::vec4 const &b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 }
 
 __device__ __inline__
-float cudaDot4D(float const *a, glm::vec4 const &b) {
+float cudaDot4D(glm::vec4 const &a, float const * const b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 }
 
 __device__ __inline__
-float cudaDot4D(glm::vec4 const &a, glm::vec4 const &b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+float cudaDot4D(float const * const patch, int const idx, float const * const b) {
+    return GET_COMP(patch, idx, X) * b[0] +
+           GET_COMP(patch, idx, Y) * b[1] +
+           GET_COMP(patch, idx, Z) * b[2] +
+           GET_COMP(patch, idx, W) * b[3];
 }
 
-__device__ __inline__
-float cudaDot4D(glm::vec4 const &a, float const *b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-}
-
-__global__
-void kernelMVP(GpuQueue queue, RenderModel model) {
+static __global__
+void kernelMVP(GpuQueue queue, RenderModel const model) {
     uint64_t patchId = getGlobalIdx3DZ();
     int idx = getIdx();
 
@@ -484,19 +522,22 @@ void kernelMVP(GpuQueue queue, RenderModel model) {
 
     glm::vec4 src;
     glm::vec4 dest;
-    src.x = model.x[patchId * NUM_POINTS + idx];
-    src.y = model.y[patchId * NUM_POINTS + idx];
-    src.z = model.z[patchId * NUM_POINTS + idx];
-    src.w = model.w[patchId * NUM_POINTS + idx];
+
+    uint64_t pointId = patchId * NUM_POINTS + idx;
+
+    src.x = model.x[pointId];
+    src.y = model.y[pointId];
+    src.z = model.z[pointId];
+    src.w = model.w[pointId];
 
     for (int i = 0; i < 4; i++) {
         dest[i] = cudaDot4D(gMVP[i], src);
     }
 
-    queue.x.getPointer()[patchId * NUM_POINTS + idx] = dest.x;
-    queue.y.getPointer()[patchId * NUM_POINTS + idx] = dest.y;
-    queue.z.getPointer()[patchId * NUM_POINTS + idx] = dest.z;
-    queue.w.getPointer()[patchId * NUM_POINTS + idx] = dest.w;
+    queue.x.getPointer()[pointId] = dest.x;
+    queue.y.getPointer()[pointId] = dest.y;
+    queue.z.getPointer()[pointId] = dest.z;
+    queue.w.getPointer()[pointId] = dest.w;
 }
 
 
@@ -504,160 +545,51 @@ void VDRender::runKernelMVP(GpuQueue &queue, RenderModel const &model) {
     Timer time;
     time.start();
 
-    size_t patches = PATCHPERBLOCK;
+    size_t patches = NUM_PATCHES_MVP;
     dim3 block(DEGREE, DEGREE, patches);
     dim3 gridDim = gridConfigureZ(queue.size, block);
+    cudaFuncSetCacheConfig(kernelMVP, cudaFuncCachePreferL1);
     kernelMVP <<<gridDim, block>>> (queue, model);
-    cudaThreadSynchronize();
+    cudaDeviceSynchronize();
 
     uint64_t elapsed = time.elapsedNanosecondsU64();
     m_statistics.kernelMVPNanoseconds += elapsed;
     cudaCheckErrors("KernelMVP");
 }
 
-__device__
-void generatePrimitives(float const *patches, Triangles &pointer) {
-    int idx = getIdx();
-    // быстрее на 0.06 ms
-    float *out = reinterpret_cast<float*>(pointer.points);
-    for (int i = threadIdx.y; i < NUM_POINTS_IN_TRIANGLES; i += NUM_COMP) {
-        out[i * NUM_COMP + threadIdx.x] = patches[threadIdx.x * NUM_POINTS + triangleThreadPointChooser[i]];
-    }
-//    if (idx < 12) {
-//        int offset = idx >> 2;
-//        pointer.points[0 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 1];
-//        pointer.points[0 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 0];
-//        pointer.points[0 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 0];
 
-//        pointer.points[2 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 1];
-//        pointer.points[2 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 2];
-//        pointer.points[2 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 1];
 
-//        pointer.points[4 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 2];
-//        pointer.points[4 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 3];
-//        pointer.points[4 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 2];
 
-//        pointer.points[1 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 1];
-//        pointer.points[1 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 1];
-//        pointer.points[1 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 0];
 
-//        pointer.points[3 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 2];
-//        pointer.points[3 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 2];
-//        pointer.points[3 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 1];
-
-//        pointer.points[5 + offset * 6][0][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (0 + offset) * DEGREE + 3];
-//        pointer.points[5 + offset * 6][1][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 3];
-//        pointer.points[5 + offset * 6][2][threadIdx.x] = patches[threadIdx.x * NUM_POINTS + (1 + offset) * DEGREE + 2];
-//    }
-
-}
-
-__global__
-void kernelTriangleGenerate(GpuQueue queue, Triangles *pointer) {
-    uint64_t patchId = getGlobalIdx3DZ();
-    int idx = getIdx();
-    if (patchId >= queue.size) {
-        return;
-    }
-
-    __shared__ volatile float patches[PATCHPERBLOCK][NUM_COMP][NUM_POINTS];
-    float volatile *shared_pointer = reinterpret_cast<float volatile*>(patches) + threadIdx.z * NUM_COMP * NUM_POINTS;
-    shared_pointer[0 * NUM_POINTS + idx] = queue.x.getPointer()[patchId * NUM_POINTS + idx];
-    shared_pointer[1 * NUM_POINTS + idx] = queue.y.getPointer()[patchId * NUM_POINTS + idx];
-    shared_pointer[2 * NUM_POINTS + idx] = queue.z.getPointer()[patchId * NUM_POINTS + idx];
-    shared_pointer[3 * NUM_POINTS + idx] = queue.w.getPointer()[patchId * NUM_POINTS + idx];
-    generatePrimitives(const_cast<float*>(shared_pointer), pointer[patchId]);
-
-}
-
-void runTriangleGenerate(GpuQueue const &queue, Triangles *pointer) {
-    Timer time;
-    time.start();
-
-    size_t patches = PATCHPERBLOCK;
-    dim3 block(DEGREE, DEGREE, patches);
-    dim3 gridDim = gridConfigureZ(queue.size, block);
-    kernelTriangleGenerate <<<gridDim, block>>> (queue, pointer);
-    cudaThreadSynchronize();
-
-    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "ViewDependentRender", "runTriangleGenerate", "total time %f", time.elapsedNanoseconds());
-    cudaCheckErrors("runTriangleGenerate");
-}
-
-__device__ __inline__
+static __device__ __inline__
 void makeEdgesLinear(float volatile *patch, DecisionBits const &decision) {
+    int8_t threadShift = threadIdx.x * NUM_POINTS;
     for (int i = threadIdx.y; i < 8; i += 4) {
-        float t = ((i & 1) + 1) / 3.0f;
+        float t = ((i & 1) + 1.0f) / 3.0f;
         int8_t point_id = edgeThreadPointChooser[0 * 8 + i];
         int8_t next_point_id = edgeThreadPointChooser[0 * 8 + (i & 1)? i - 1 : i + 1];
         if (decision.get(point_id) && decision.get(next_point_id)) {
-            patch[point_id + threadIdx.x * NUM_POINTS] = (1.0f - t) * patch[edgeThreadPointChooser[1 * 8 + i] + threadIdx.x * NUM_POINTS] +
-                                                                  t * patch[edgeThreadPointChooser[2 * 8 + i] + threadIdx.x * NUM_POINTS];
-        }
-    }
-}
-#define down_left(p, comp)       (p)[0 * DEGREE + 0 + (comp) * NUM_POINTS]
-#define down_right(p, comp)      (p)[0 * DEGREE + 3 + (comp) * NUM_POINTS]
-#define up_left(p, comp)         (p)[3 * DEGREE + 0 + (comp) * NUM_POINTS]
-#define up_right(p, comp)        (p)[3 * DEGREE + 3 + (comp) * NUM_POINTS]
-#define pointComp(p, i, j, comp) (p)[(i) * DEGREE + (j) + (comp) * NUM_POINTS]
-
-//#define linear(a, b, t) ((1.0f - (t)) * (a) + ((t) * (b)))
-#define linear(a, b, t) (a + (b - a) * t)
-__device__ __inline__
-void makeEdgesLinear0(float volatile *patch, DecisionBits const &decision) {
-    if (decision.get(0, 0) && decision.get(0, 1) && decision.get(0, 2) && decision.get(0, 3)) {
-        pointComp(patch, 0, 1, 3) = linear(down_left(patch, 3), down_right(patch, 3), 1.0f / 3.0f);
-        pointComp(patch, 0, 2, 3) = linear(down_left(patch, 3), down_right(patch, 3), 2.0f / 3.0f);;
-        for (int i = 0; i < 3; i++) {
-            pointComp(patch, 0, 1, i) = linear(down_left(patch, i), down_right(patch, i), 1.0f / 3.0f);
-            pointComp(patch, 0, 2, i) = linear(down_left(patch, i), down_right(patch, i), 2.0f / 3.0f);
-        }
-    }
-
-    if (decision.get(3, 0) && decision.get(3, 1) && decision.get(3, 2) && decision.get(3, 3)) {
-        pointComp(patch, 3, 1, 3) = linear(up_left(patch, 3), up_right(patch, 3), 1.0f / 3.0f);
-        pointComp(patch, 3, 2, 3) = linear(up_left(patch, 3), up_right(patch, 3), 2.0f / 3.0f);
-        for (int i = 0; i < 3; i++) {
-            pointComp(patch, 3, 1, i) = linear(up_left(patch, i), up_right(patch, i), 1.0f / 3.0f);
-            pointComp(patch, 3, 2, i) = linear(up_left(patch, i), up_right(patch, i), 2.0f / 3.0f);
-        }
-    }
-
-    if (decision.get(0, 0) && decision.get(1, 0) && decision.get(2, 0) && decision.get(3, 0)) {
-        pointComp(patch, 1, 0, 3) = linear(down_left(patch, 3), up_left(patch, 3), 1.0f / 3.0f);
-        pointComp(patch, 2, 0, 3) = linear(down_left(patch, 3), up_left(patch, 3), 2.0f / 3.0f);;
-        for (int i = 0; i < 3; i++) {
-            pointComp(patch, 1, 0, i) = linear(down_left(patch, i), up_left(patch, i), 1.0f / 3.0f);
-            pointComp(patch, 2, 0, i) = linear(down_left(patch, i), up_left(patch, i), 2.0f / 3.0f);
-        }
-    }
-
-    if (decision.get(0, 3) && decision.get(1, 3) && decision.get(2, 3) && decision.get(3, 3)) {
-        pointComp(patch, 1, 3, 3) = linear(down_right(patch, 3), up_right(patch, 3), 1.0f / 3.0f);
-        pointComp(patch, 2, 3, 3) = linear(down_right(patch, 3), up_right(patch, 3), 2.0f / 3.0f);;
-        for (int i = 0; i < 3; i++) {
-            pointComp(patch, 1, 3, i) = linear(down_right(patch, i), up_right(patch, i), 1.0f / 3.0f);
-            pointComp(patch, 2, 3, i) = linear(down_right(patch, i), up_right(patch, i), 2.0f / 3.0f);
+            patch[point_id + threadShift] = (1.0f - t) * patch[edgeThreadPointChooser[1 * 8 + i] + threadShift] +
+                                      t * patch[edgeThreadPointChooser[2 * 8 + i] + threadShift];
         }
     }
 }
 
-__device__ __inline__
-void loadPoints(float volatile *dest1, float volatile *dest2, PatchPointer &patch, int const idx) {
-    dest1[0 * NUM_POINTS + idx] = patch.x[idx];
-    dest1[1 * NUM_POINTS + idx] = patch.y[idx];
-    dest1[2 * NUM_POINTS + idx] = patch.z[idx];
-    dest1[3 * NUM_POINTS + idx] = patch.w[idx];
+static __device__ __inline__
+void loadPoints(float volatile *dest1, float volatile *dest2, PatchPointer const &patch, int const idx) {
+    GET_COMP(dest1, idx, X) = patch.x[idx];
+    GET_COMP(dest1, idx, Y) = patch.y[idx];
+    GET_COMP(dest1, idx, Z) = patch.z[idx];
+    GET_COMP(dest1, idx, W) = patch.w[idx];
 
-    dest2[0 * NUM_POINTS + idx] = dest1[0 * NUM_POINTS + idx];
-    dest2[1 * NUM_POINTS + idx] = dest1[1 * NUM_POINTS + idx];
-    dest2[2 * NUM_POINTS + idx] = dest1[2 * NUM_POINTS + idx];
-    dest2[3 * NUM_POINTS + idx] = dest1[3 * NUM_POINTS + idx];
+    GET_COMP(dest2, idx, X) = GET_COMP(dest1, idx, X);
+    GET_COMP(dest2, idx, Y) = GET_COMP(dest1, idx, Y);
+    GET_COMP(dest2, idx, Z) = GET_COMP(dest1, idx, Z);
+    GET_COMP(dest2, idx, W) = GET_COMP(dest1, idx, W);
 }
 
-__device__ __inline__
-void subdivide4(float t, PatchPointer &out, float volatile *sharedA, float volatile *sharedB) {
+static __device__ __inline__
+void subdivide4(PatchPointer &out, float volatile *sharedA, float volatile *sharedB) {
     float LL[NUM_COMP];
     float LR[NUM_COMP];
     float RL[NUM_COMP];
@@ -668,11 +600,11 @@ void subdivide4(float t, PatchPointer &out, float volatile *sharedA, float volat
         LL[i] = 0;
         LR[i] = 0;
         for (j = 0; j < DEGREE; j++) {
-            LL[i] += sharedA[(threadIdx.y * DEGREE + j) + i * NUM_POINTS] * gSLU[j][threadIdx.x];
-            LR[i] += sharedA[(threadIdx.y * DEGREE + j) + i * NUM_POINTS] * gSRU[j][threadIdx.x];
+            LL[i] += GET_COMP(sharedA, (threadIdx.y * DEGREE + j), i) * gSLU[j][threadIdx.x];
+            LR[i] += GET_COMP(sharedA, (threadIdx.y * DEGREE + j), i) * gSRU[j][threadIdx.x];
         }
-        sharedA[(threadIdx.y * DEGREE + threadIdx.x) + i * NUM_POINTS] = LL[i];
-        sharedB[(threadIdx.y * DEGREE + threadIdx.x) + i * NUM_POINTS] = LR[i];
+        GET_COMP(sharedA, (threadIdx.y * DEGREE + threadIdx.x), i) = LL[i];
+        GET_COMP(sharedB, (threadIdx.y * DEGREE + threadIdx.x), i) = LR[i];
     }
 
     for (i = 0; i < NUM_COMP; i++) {
@@ -682,23 +614,192 @@ void subdivide4(float t, PatchPointer &out, float volatile *sharedA, float volat
         RR[i] = 0;
 
         for (j = 0; j < DEGREE; j++) {
-            LL[i] += gSLV[threadIdx.y][j] * sharedA[(j * DEGREE + threadIdx.x) + i * NUM_POINTS];
-            LR[i] += gSLV[threadIdx.y][j] * sharedB[(j * DEGREE + threadIdx.x) + i * NUM_POINTS];
-            RL[i] += gSRV[threadIdx.y][j] * sharedA[(j * DEGREE + threadIdx.x) + i * NUM_POINTS];
-            RR[i] += gSRV[threadIdx.y][j] * sharedB[(j * DEGREE + threadIdx.x) + i * NUM_POINTS];
+            int idx = (j * DEGREE + threadIdx.x) + i * NUM_POINTS;
+            LL[i] += gSLV[threadIdx.y][j] * sharedA[idx];
+            LR[i] += gSLV[threadIdx.y][j] * sharedB[idx];
+            RL[i] += gSRV[threadIdx.y][j] * sharedA[idx];
+            RR[i] += gSRV[threadIdx.y][j] * sharedB[idx];
         }
     }
 
 
     for (i = 0; i < NUM_COMP; i++) {
-        out.p[i][0 * NUM_POINTS + threadIdx.y * DEGREE + threadIdx.x] = LL[i];
-        out.p[i][1 * NUM_POINTS + threadIdx.y * DEGREE + threadIdx.x] = LR[i];
-        out.p[i][2 * NUM_POINTS + threadIdx.y * DEGREE + threadIdx.x] = RL[i];
-        out.p[i][3 * NUM_POINTS + threadIdx.y * DEGREE + threadIdx.x] = RR[i];
+        int shift = threadIdx.y * DEGREE + threadIdx.x;
+        GET_COMP(out.p[i], shift, X) = LL[i];
+        GET_COMP(out.p[i], shift, Y) = LR[i];
+        GET_COMP(out.p[i], shift, Z) = RL[i];
+        GET_COMP(out.p[i], shift, W) = RR[i];
     }
 }
 
-__global__
+__device__
+float sign(float const t) {
+    return (t > 0.0f) * 1.0f + (t < 0.0f) * (-1.0f);
+}
+
+static __device__
+void generatePrimitives(float const factor, float const *patches, Triangles &pointer) {
+    int idx = getIdx();
+    float *out = reinterpret_cast<float*>(pointer.points);
+
+    int shift = (idx & 1) + 2;
+    for (int i = idx / 2; i < NUM_POINTS_IN_TRIANGLES; i += 8) {
+        float output = patches[shift * NUM_POINTS + triangleThreadPointChooser[i]];
+        out[i * NUM_COMP + shift] = output;
+    }
+
+    shift = (idx & 1);
+    float maxSize = fmaxf(gWidth, gHeight);
+    int halfidx = idx / 2;
+    for (int i = halfidx; i < NUM_POINTS_IN_TRIANGLES; i += 8) {
+        glm::vec2 a;
+        int3 idx;
+        idx.x = triangleThreadPointChooser[i];
+        idx.y = triangleThreadPointChooser2[i];
+        idx.z = triangleThreadPointChooser3[i];
+
+        a.x = patches[0 * NUM_POINTS + idx.x];
+        a.y = patches[1 * NUM_POINTS + idx.x];
+
+        float w = patches[3 * NUM_POINTS + idx.x];
+        a  /= w;
+        a.x = a.x - 0.5f * (patches[0 * NUM_POINTS + idx.y] / patches[3 * NUM_POINTS + idx.y] + patches[0 * NUM_POINTS + idx.z] / patches[3 * NUM_POINTS + idx.z]);
+        a.y = a.y - 0.5f * (patches[1 * NUM_POINTS + idx.y] / patches[3 * NUM_POINTS + idx.y] + patches[1 * NUM_POINTS + idx.z] / patches[3 * NUM_POINTS + idx.z]);
+        float t = a[shift] * rsqrtf(SQR(a[0]) + SQR(a[1]));
+        out[i * NUM_COMP + shift] = patches[shift * NUM_POINTS + idx.x] + 2.0f * (factor / maxSize) * (t) * w;
+    }
+}
+
+static __device__
+void generatePrimitives0(float const *patches, Triangles &pointer) {
+    float *out = reinterpret_cast<float*>(pointer.points);
+    for (int i = threadIdx.y; i < NUM_POINTS_IN_TRIANGLES; i += NUM_COMP) {
+        float output = GET_COMP(patches, triangleThreadPointChooser[i], threadIdx.x);
+        out[i * NUM_COMP + threadIdx.x] = output;
+    }
+}
+
+
+static __global__
+void kernelTriangleGenerate(GpuQueue queue, Triangles *pointer) {
+    uint64_t patchId = getGlobalIdx3DZ();
+    int idx = getIdx();
+    if (patchId >= queue.size) {
+        return;
+    }
+
+    __shared__ volatile float patches[NUM_PATCHES_WITH_SHARED][NUM_COMP][NUM_POINTS];
+    float volatile *shared_pointer = reinterpret_cast<float volatile*>(patches) + threadIdx.z * NUM_COMP * NUM_POINTS;
+    GET_COMP(shared_pointer, idx, X) = queue.x.getPointer()[patchId * NUM_POINTS + idx];
+    GET_COMP(shared_pointer, idx, Y) = queue.y.getPointer()[patchId * NUM_POINTS + idx];
+    GET_COMP(shared_pointer, idx, Z) = queue.z.getPointer()[patchId * NUM_POINTS + idx];
+    GET_COMP(shared_pointer, idx, W) = queue.w.getPointer()[patchId * NUM_POINTS + idx];
+    generatePrimitives0(const_cast<float*>(shared_pointer), pointer[patchId]);
+
+}
+static
+void runTriangleGenerate(GpuQueue const &queue, Triangles *pointer) {
+    Timer time;
+    time.start();
+
+    size_t patches = NUM_PATCHES_WITH_SHARED;
+    dim3 block(DEGREE, DEGREE, patches);
+    dim3 gridDim = gridConfigureZ(queue.size, block);
+    kernelTriangleGenerate <<<gridDim, block>>> (queue, pointer);
+    cudaDeviceSynchronize();
+
+    Log::getInstance().write(LOG_MESSAGE_TYPE::DEBUG, "ViewDependentRender", "runTriangleGenerate", "total time %f", time.elapsedNanoseconds());
+    cudaCheckErrors("runTriangleGenerate");
+}
+
+
+static __device__ __inline__
+float signedArea(glm::vec2 const &a, glm::vec2 const &b, glm::vec2 const &c) {
+    return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
+}
+
+static __device__ __inline__
+float signedArea(float volatile *patch, int const a, int const b, int const c) {
+    return (GET_COMP(patch, b, X) - GET_COMP(patch, a, X))*(GET_COMP(patch, c, Y) - GET_COMP(patch, a, Y))
+            - (GET_COMP(patch, b, Y) - GET_COMP(patch, a, Y))*(GET_COMP(patch, c, X) - GET_COMP(patch, a, X));
+}
+
+static __device__ __inline__
+float signedArea(float const *patch, int const a, int const b, int const c) {
+    return (GET_COMP(patch, b, X) - GET_COMP(patch, a, X))*(GET_COMP(patch, c, Y) - GET_COMP(patch, a, Y))
+            - (GET_COMP(patch, b, Y) - GET_COMP(patch, a, Y))*(GET_COMP(patch, c, X) - GET_COMP(patch, a, X));
+}
+
+__device__
+inline float det (float const a, float const b, float const c, float const d) {
+    return a * d - b * c;
+}
+
+__device__
+inline bool between (float const a, float const b, float const c) {
+    return fminf(a,b) <= c && c <= fmaxf(a,b);
+}
+
+//From http://stackoverflow.com/questions/563198/how-do-you-detect-where-two-line-segments-intersect
+__device__
+bool insertSegmentOptimized(float volatile *patch, int const a, int const b, int const c, int const d)
+{
+    float s02_x, s02_y, s10_x, s10_y, s32_x, s32_y, s_numer, t_numer, denom;
+    s10_x = GET_COMP(patch, b, X) - GET_COMP(patch, a, X);
+    s10_y = GET_COMP(patch, b, Y) - GET_COMP(patch, a, Y);
+    s32_x = GET_COMP(patch, d, X) - GET_COMP(patch, c, X);
+    s32_y = GET_COMP(patch, d, Y) - GET_COMP(patch, c, Y);
+
+    denom = s10_x * s32_y - s32_x * s10_y;
+    if (denom == 0)
+        return 0;
+    bool denomPositive = denom > 0;
+
+    s02_x = GET_COMP(patch, a, X) - GET_COMP(patch, c,  X);
+    s02_y = GET_COMP(patch, a, Y) - GET_COMP(patch, c, Y);
+    s_numer = s10_x * s02_y - s10_y * s02_x;
+    if ((s_numer < 0) == denomPositive)
+        return 0;
+    t_numer = s32_x * s02_y - s32_y * s02_x;
+    if ((t_numer < 0) == denomPositive)
+        return 0;
+    if (((s_numer > denom) == denomPositive) || ((t_numer > denom) == denomPositive))
+        return 0;
+    return true;
+}
+
+__device__
+void edgeExtend(float factor, float volatile *patch, float volatile *memory) {
+    int idx = getIdx();
+    GET_COMP(memory, idx, X) = GET_COMP(patch, idx, X) / GET_COMP(patch, idx, W);
+    GET_COMP(memory, idx, Y) = GET_COMP(patch, idx, Y) / GET_COMP(patch, idx, W);
+
+    if (idx == 0) {
+        bool diagIntersect = (insertSegmentOptimized(memory, 0, 15, 3, 12));
+        // проверка, что полигон не имеет самопересечений -- диагонали пересекаются
+        if (diagIntersect) {
+            glm::vec2 diag1, diag2;
+            diag1.x = GET_COMP(memory, 0, X) - GET_COMP(memory, 15, X);
+            diag1.y = GET_COMP(memory, 0, Y) - GET_COMP(memory, 15, Y);
+
+            diag2.x = GET_COMP(memory, 3, X) - GET_COMP(memory, 12, X);
+            diag2.y = GET_COMP(memory, 3, Y) - GET_COMP(memory, 12, Y);
+
+            diag1 *= rsqrtf(SQR(diag1[0]) + SQR(diag1[1]));
+            diag2 *= rsqrtf(SQR(diag2[0]) + SQR(diag2[1]));
+
+            factor = 2.0 * factor / gWidth;
+            for (int i = 0; i < 2; i++) {
+                GET_COMP(patch, 0, i)  +=  factor * diag1[i] * GET_COMP(patch, 0, W);
+                GET_COMP(patch, 3, i)  +=  factor * diag2[i] * GET_COMP(patch, 3, W);
+                GET_COMP(patch, 15, i) += factor * -diag1[i] * GET_COMP(patch, 15, W);
+                GET_COMP(patch, 12, i) += factor * -diag2[i] * GET_COMP(patch, 12, W);
+            }
+        }
+    }
+}
+
+static __global__
 void kernelSplit(GpuQueue queue, GpuQueue newQueue, Triangles *primitives,
                  uint64_t const *todoExclusiveSum, uint64_t const *doneExclusiveSum, DecisionBits const *threadDecision)
 {
@@ -708,7 +809,7 @@ void kernelSplit(GpuQueue queue, GpuQueue newQueue, Triangles *primitives,
     if (patchId >= queue.size || threadDecision[patchId].isCULL()) {
         return;
     }
-    __shared__ volatile float sharedMemory[PATCHPERBLOCK][2][NUM_COMP][NUM_POINTS];
+    __shared__ volatile float sharedMemory[NUM_PATCHES_SPLIT][2][NUM_COMP][NUM_POINTS];
 
     float volatile *patchA = reinterpret_cast<float volatile*>(sharedMemory) + threadIdx.z * 2 * NUM_POINTS * NUM_COMP;
     float volatile *patchB = patchA + NUM_POINTS * NUM_COMP;
@@ -720,73 +821,41 @@ void kernelSplit(GpuQueue queue, GpuQueue newQueue, Triangles *primitives,
     patch.w = queue.w.getPointer() + offset;
 
     loadPoints(patchA, patchB, patch, idx);
-    //makeEdgesLinear0(patchA, threadDecision[patchId]);
-    makeEdgesLinear(patchA, threadDecision[patchId]);
+
     if (!threadDecision[patchId].isReady()) {
+        makeEdgesLinear(patchA, threadDecision[patchId]);
+
         offset = todoExclusiveSum[patchId] * NUM_POINTS;
         patch.x = newQueue.x.getPointer() + offset;
         patch.y = newQueue.y.getPointer() + offset;
         patch.z = newQueue.z.getPointer() + offset;
         patch.w = newQueue.w.getPointer() + offset;
 
-        subdivide4(0.5, patch, patchA, patchB);
+        subdivide4(patch, patchA, patchB);
     } else {
-        generatePrimitives(const_cast<float*>(patchA), primitives[doneExclusiveSum[patchId]]);
+        //makeEdgesLinear(patchA, threadDecision[patchId]);
+        //generatePrimitives(1, const_cast<float*>(patchA), primitives[doneExclusiveSum[patchId]]);
+        edgeExtend(0.5, patchA, patchB);
+        makeEdgesLinear(patchA, threadDecision[patchId]);
+        generatePrimitives0(const_cast<float*>(patchA), primitives[doneExclusiveSum[patchId]]);
     }
 }
 
-__device__ __inline__
-float cross_z(glm::vec3 &a, glm::vec3 &b) {
-    a = glm::normalize(a);
-    b = glm::normalize(b);
-    return (a.x * b.y) - (a.y * b.x);
-}
-
-__device__ __inline__
-float cross_z(glm::vec2 &a, glm::vec2 &b) {
-    a = glm::normalize(a);
-    b = glm::normalize(b);
-    return (a.x * b.y) - (a.y * b.x);
-}
-__device__
-float test(glm::vec2 &a, glm::vec2 &b, glm::vec2 &c) {
-    return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
-}
-
-__device__ __inline__
-bool testBackfaceCullingSharedMemory(glm::vec4* corners, VDFrontFace const &face) {
+static __device__ __inline__
+bool testBackfaceCulling(glm::vec4* corners, VDFrontFace const &face) {
     glm::vec2 a (corners[0].x / corners[0].w, corners[0].y / corners[0].w);
     glm::vec2 b (corners[1].x / corners[1].w, corners[1].y / corners[1].w);
     glm::vec2 c (corners[2].x / corners[2].w, corners[2].y / corners[2].w);
     glm::vec2 d (corners[3].x / corners[3].w, corners[3].y / corners[3].w);
 
     if (face == VDFrontFace::FRONT) {
-        return (test(a,b,c) > 0 && test (c, b, d) > 0);
+        return (signedArea(a,b,c) > 0 && signedArea (c, b, d) > 0);
     }
-    return (test(a,b,c) < 0 && test (c, b, d) < 0);
-
-    /*glm::vec2 u = b - a;
-    glm::vec2 v = c - a;
-    float z = cross_z(u, v);
-    bool res = z > 0;
-    u = d - b;
-    v = a - b;
-    z = cross_z(u, v);
-    res = res && z > 0;
-    u = a - c;
-    v = d - c;
-    z = cross_z(u, v);
-    res = res && z > 0;
-    u = c - d;
-    v = b - d;
-    z = cross_z(u, v);
-    res = res && z > 0;*/
-
-    //return res;
+    return (signedArea(a,b,c) < 0 && signedArea (c, b, d) < 0);
 }
 
 
-__device__
+static __device__
 bool boundingBox(PatchPointer const &patch, int idx) {
     glm::vec4 point;
     point.x = patch.x[idx];
@@ -795,6 +864,7 @@ bool boundingBox(PatchPointer const &patch, int idx) {
     point.w = patch.w[idx];
 
     uint32_t test;
+
     for (int i = 0; i < 6; i++) {
         test = ((static_cast<uint32_t>(__ballot(cudaDot4D(point, gClipSpacePlanes[i]) >= 0.0f))) >> ((threadIdx.z & 1)? 16 : 0)) & 0xFFFF;
         if (test == 0) {
@@ -806,21 +876,21 @@ bool boundingBox(PatchPointer const &patch, int idx) {
 }
 
 
-__device__ __inline__
+static __device__ __inline__
 int getCorner(int i) {
     return i * 3 + (i > 1) * 6;
 }
 
 
-__device__ __inline__
+static __device__ __inline__
 void loadCornersToSharedMemory(float volatile *memory, PatchPointer const &pointer) {
     memory[threadIdx.x * 4 + threadIdx.y] = pointer.p[threadIdx.y][getCorner(threadIdx.x)]; // транспонирование
 }
 
 
 
-__device__
-DecisionBits approxQuad(PatchPointer &patch, float const &threshold, glm::vec4 *corners, int idx) {
+static __device__
+DecisionBits approxQuad(PatchPointer const &patch, float const &threshold, glm::vec4 const *corners, int const idx) {
     DecisionBits decision = { 0 };
     glm::vec2 test;
     float w;
@@ -841,11 +911,82 @@ DecisionBits approxQuad(PatchPointer &patch, float const &threshold, glm::vec4 *
     return decision.arr;
 }
 
+static __device__ __inline__
+glm::vec2 bilinearInterpolationCornersSharedMemory(float const u, float const v, float const *memory) {
+    glm::vec2 vec;
+    float t1, t2;
+    for (int i = 0; i < 2; i++) {
+        t1 = linearInterpolation(GET_COMP(memory, 0, i), GET_COMP(memory, 3, i), u);
+        t2 = linearInterpolation(GET_COMP(memory, 12, i), GET_COMP(memory, 15, i), u);
+        vec[i] = linearInterpolation(t1, t2, v);
+    }
+
+    t1 = linearInterpolation(GET_COMP(memory, 0, W), GET_COMP(memory, 3, W), u);
+    t2 = linearInterpolation(GET_COMP(memory, 12, W), GET_COMP(memory, 15, W), u);
+    float w = linearInterpolation(t1, t2, v);
+    vec.x /= w;
+    vec.y /= w;
+    return vec;
+}
+
+static __device__ __inline__
+bool testBackfaceCullingSharedMemory(float volatile *memory, VDFrontFace const &face) {
+    int idx = getIdx();
+    memory[0 * NUM_POINTS + idx] /= memory[3 * NUM_POINTS + idx];
+    memory[1 * NUM_POINTS + idx] /= memory[3 * NUM_POINTS + idx];
+
+    if (idx == 0) {
+        if (face == VDFrontFace::FRONT) {
+            return (signedArea(memory, 0, 3, 12) > 0 && signedArea(memory, 12, 3, 15) > 0);
+        }
+        return (signedArea(memory, 0, 3, 12) < 0 && signedArea(memory, 12, 3, 15) < 0);
+    }
+    return false;
+}
 
 
-__global__
-void kernelOracle(GpuQueue const queue, float const threshold,
-                  uint64_t *todo, uint64_t *done, DecisionBits *threadDecision, VDFrontFace const face, bool forceDone)
+static __device__
+bool boundingBoxSharedMemory(float const *memory, int const idx) {
+    uint32_t shift = ((threadIdx.z & 1) * 16);
+    for (int i = 0; i < 6; i++) {
+        float dot = cudaDot4D(memory, idx, gClipSpacePlanes[i]);
+        int test = (((__ballot(dot >= 0.0f))) >> shift) & 0xFFFF;
+        if (test == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+
+static __device__
+DecisionBits approxQuadSharedMemory(float *memory, float const &threshold, int const idx) {
+    DecisionBits decision = { 0 };
+    glm::vec2 test;
+    glm::vec2 interpolate = bilinearInterpolationCornersSharedMemory(threadIdx.x * 1.0f / 3.0f, threadIdx.y * 1.0f / 3.0f, memory);
+
+    test.x = GET_COMP(memory, idx, X) / GET_COMP(memory, idx, W);
+    test.y = GET_COMP(memory, idx, Y) / GET_COMP(memory, idx, W);
+
+    test.x = (test.x - interpolate.x) * 0.5f * gWidth;
+    test.y = (test.y - interpolate.y) * 0.5f * gHeight;
+
+    bool lessThenTreshold = (SQR((test.x)) + SQR((test.y))) <= SQR(threshold);
+    decision.arr = ((__ballot(lessThenTreshold)) >> ((threadIdx.z & 1) * 16)) & 0xFFFF;
+    return decision.arr;
+}
+
+static __device__ __inline__
+void loadPointsSharedMemory(float volatile *dest1, PatchPointer const &patch, int const idx) {
+    dest1[0 * NUM_POINTS + idx] = patch.x[idx];
+    dest1[1 * NUM_POINTS + idx] = patch.y[idx];
+    dest1[2 * NUM_POINTS + idx] = patch.z[idx];
+    dest1[3 * NUM_POINTS + idx] = patch.w[idx];
+}
+
+static __global__
+void kernelOracleSharedMemory(GpuQueue const queue, float const threshold,
+                  uint64_t *todo, uint64_t *done, DecisionBits *threadDecision, VDFrontFace const face, bool const forceDone)
 {
     uint64_t patchId = getGlobalIdx3DZ();
     int idx = getIdx();
@@ -853,7 +994,58 @@ void kernelOracle(GpuQueue const queue, float const threshold,
         return;
     }
 
-    __shared__ float memory[PATCHPERBLOCK][4][NUM_COMP];
+    __shared__ float memory[NUM_PATCHES_ORACLE][NUM_COMP][NUM_POINTS];
+
+    DecisionBits decision = {0};
+    PatchPointer patch;
+
+    uint64_t offset = patchId * NUM_POINTS;
+    patch.x = queue.x.getPointer() + offset;
+    patch.y = queue.y.getPointer() + offset;
+    patch.z = queue.z.getPointer() + offset;
+    patch.w = queue.w.getPointer() + offset;
+
+    float* halfWarpMemory = reinterpret_cast<float*>(memory) + threadIdx.z * NUM_COMP * NUM_POINTS;
+
+    loadPointsSharedMemory(const_cast<float volatile*>(halfWarpMemory), patch, idx);
+
+    bool inscreen = boundingBoxSharedMemory(halfWarpMemory, idx);
+
+    if (!inscreen) {
+        decision.setCULL();
+    } else {
+        if (forceDone == false) {
+            decision = approxQuadSharedMemory(halfWarpMemory, threshold, idx);
+        } else {
+            decision = 0xFFFF;
+        }
+
+        if (decision.isReady() && face != VDFrontFace::NONE) {
+            bool backface = testBackfaceCullingSharedMemory(halfWarpMemory, face);
+            if (backface) {
+                decision.setCULL();
+            }
+        }
+    }
+
+    if (idx == 0) {
+        todo[patchId] = (decision.isReady() || decision.isCULL()) ? 0 : 4;
+        threadDecision[patchId] = decision;
+        done[patchId] = decision.isReady();
+    }
+}
+
+__global__
+void kernelOracle(GpuQueue const queue, float const threshold,
+                  uint64_t *todo, uint64_t *done, DecisionBits *threadDecision, VDFrontFace const face, bool const forceDone)
+{
+    uint64_t patchId = getGlobalIdx3DZ();
+    int idx = getIdx();
+    if (patchId >= queue.size) {
+        return;
+    }
+
+    __shared__ float memory[NUM_PATCHES_ORACLE][4][NUM_COMP];
     PatchPointer patch;
     DecisionBits decision = {0};
     patch.x = queue.x.getPointer() + patchId * NUM_POINTS;
@@ -877,7 +1069,7 @@ void kernelOracle(GpuQueue const queue, float const threshold,
         }
 
         if (idx == 0 && decision.isReady() && face != VDFrontFace::NONE) {
-            bool backface = testBackfaceCullingSharedMemory(reinterpret_cast<glm::vec4*>(halfWarpMemory), face);
+            bool backface = testBackfaceCulling(reinterpret_cast<glm::vec4*>(halfWarpMemory), face);
             if (backface) {
                 decision.setCULL();
             }
@@ -899,12 +1091,15 @@ void VDRender::runKernelOracle(GpuQueue &queue,
                                GpuPointer<DecisionBits> &threadDecision,
                                VDFrontFace const &face,
                                bool const forceDone) {
-    size_t patches = PATCHPERBLOCK;
+    size_t patches = NUM_PATCHES_ORACLE;
     dim3 block = dim3(DEGREE, DEGREE, patches);
     dim3 gridDim = gridConfigureZ(queue.size, block);
     Timer time;
+    cudaFuncSetCacheConfig(kernelOracleSharedMemory, cudaFuncCachePreferShared);
+    cudaFuncSetCacheConfig(kernelOracle, cudaFuncCachePreferShared);
+
     time.start();
-    kernelOracle<<<gridDim, block>>>(queue,
+    kernelOracleSharedMemory<<<gridDim, block>>>(queue,
                                      threshold,
                                      todo.getPointer(),
                                      done.getPointer(),
@@ -912,7 +1107,7 @@ void VDRender::runKernelOracle(GpuQueue &queue,
                                      face,
                                      forceDone);
 
-    cudaThreadSynchronize();
+    cudaDeviceSynchronize();
     uint64_t elapsed = time.elapsedNanosecondsU64();
     m_statistics.kernelOracleNanoseconds += elapsed;
     cudaCheckErrors("KernelOracle");
@@ -920,8 +1115,7 @@ void VDRender::runKernelOracle(GpuQueue &queue,
 
 
 bool VDRender::runKernelScan(GpuPointer<uint64_t> const &array, uint64_t const size, uint64_t &sum, GpuPointer<uint64_t> &exclusiveSum) {
-    Timer time;
-    time.start();
+
 
     size_t cub_tmp_memory_size = 0;
     cub::DeviceScan::ExclusiveSum(nullptr, cub_tmp_memory_size, array.getPointer(), exclusiveSum.getPointer(), size);
@@ -933,13 +1127,16 @@ bool VDRender::runKernelScan(GpuPointer<uint64_t> const &array, uint64_t const s
         return false;
     }
 
+    Timer time;
+    time.start();
     cub::DeviceScan::ExclusiveSum(cub_tmp_memory.getPointer(), cub_tmp_memory_size, array.getPointer(), exclusiveSum.getPointer(), size);
+    cudaDeviceSynchronize();
+    uint64_t elapsed = time.elapsedNanosecondsU64();
+    m_statistics.kernelScanNanoseconds += elapsed;
+
     sum = 0;
     cudaMemcpy(&sum, exclusiveSum.getPointer() + (size - 1), sizeof(uint64_t), cudaMemcpyDeviceToHost);
     SystemManager::getInstance()->gpuStackAllocator.free(cub_tmp_memory);
-    cudaThreadSynchronize();
-    uint64_t elapsed = time.elapsedNanosecondsU64();
-    m_statistics.kernelScanNanoseconds += elapsed;
     cudaCheckErrors("KernelScan");
     return true;
 }
@@ -950,18 +1147,19 @@ void VDRender::runKernelSplit(GpuQueue &queue,
                                      GpuPointer<uint64_t> todoExclusiveSum,
                                      GpuPointer<uint64_t> doneExclusiveSum,
                                      GpuPointer<DecisionBits> threadDecisionBits) {
-    Timer time;
-    time.start();
-    size_t patches = PATCHPERBLOCK;
+    size_t patches = NUM_PATCHES_SPLIT;
     dim3 block = dim3(4, 4, patches);
     dim3 gridDim = gridConfigureZ(queue.size, block);
+    cudaFuncSetCacheConfig(kernelSplit, cudaFuncCachePreferShared);
+    Timer time;
+    time.start();
     kernelSplit<<<gridDim, block>>>(queue,
                                     newQueue,
                                     triangles,
                                     todoExclusiveSum.getPointer(),
                                     doneExclusiveSum.getPointer(),
                                     threadDecisionBits.getPointer());
-    cudaThreadSynchronize();
+    cudaDeviceSynchronize();
     uint64_t elapsed = time.elapsedNanosecondsU64();
     m_statistics.kernelSplitNanoseconds += elapsed;
     cudaCheckErrors("KernelSplit");
@@ -1029,6 +1227,7 @@ void VDRender::render(std::string const name, float threshold, int maxlevel) {
     bool forceDone = false;
 
     while (queue[first].size > 0) {
+        m_statistics.patchesCountTotalProcessed += queue[first].size;
         maxQueueSize = std::max(maxQueueSize, queue[first].size);
         runKernelOracle(queue[first], threshold, todo, done, threadDecision, m_settings.faceMode, forceDone);
         todoSize = 0;
@@ -1078,3 +1277,4 @@ void VDRender::render(std::string const name, float threshold, int maxlevel) {
     allocator.popPosition();
     m_statistics.total += time.elapsedNanosecondsU64();
 }
+

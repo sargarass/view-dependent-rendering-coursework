@@ -48,6 +48,8 @@ public:
 
 private:
     uintptr_t m_handle;
+    int m_width;
+    int m_height;
     Application *m_application;
 
     friend void keyCallback(void *, int key, int, int action, int);

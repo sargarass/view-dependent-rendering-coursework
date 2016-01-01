@@ -9,6 +9,7 @@
 #include "ViewDependentRender.h"
 #include "Nurbs.h"
 #include "Мodel.h"
+#include "Renderbuffer.h"
 
 class Window;
 class Application {
@@ -32,6 +33,11 @@ public:
     void onMouseMove(int x, int y);
     void save();
     void load();
+    void renderModel(glm::mat4 const &PV);
+    void saveCamera();
+    void loadCamera();
+    void clearCameraList();
+    void updateFramebuffer(int width, int height, bool antialiasing);
 private:
     bool show_nurbs;
     bool m_mouse_capture;
@@ -50,6 +56,11 @@ private:
     Model m_bigguy;
     Model m_teapot;
     uint64_t m_triangles;
+    int m_modelNum;
+    int m_modelIter;
     btree::btree_multiset<float> m_frameIntervalValues;
+    std::deque<Camera> m_cameraList;
+    int m_cameraIter;
     uint64_t const m_maxFrameIntervalValuesSize = 100;
+    Renderbuffer m_renderbuffer;
 };
