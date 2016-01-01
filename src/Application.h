@@ -3,7 +3,6 @@
 #include "LibResources.h"
 #include "Input.h"
 #include "Window.h"
-#include "LibResources.h"
 #include "Camera.h"
 #include "Shader.h"
 #include "ViewDependentRender.h"
