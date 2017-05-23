@@ -18,6 +18,6 @@ Libraries:
 Программная реализация алгоритма тесселяции гладких параметрических поверхностей на GPU была выполнена с использованием технологии параллельного программирования CUDA в рамках курсовой работы по компьютерной графике (3 курс ИУ-9 2015 год). Реализованный метод устраняет разрывы при визуализации, имеет высокую скорость работы, хорошо масштабируется с увеличением числа потоков/патчей в модели. 
 
 На картинках можно видеть, что ближайшие к камере полигоны имеют наибольшую детализацию.
-![]({{site.baseurl}}//%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8210.png)
-![]({{site.baseurl}}//%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8225.png)![]({{site.baseurl}}//%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8212.png)
-
+![]({{site.baseurl}}/https://github.com/sargarass/view-dependent-rendering-coursework/blob/master/%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8210.png)
+![]({{site.baseurl}}/https://github.com/sargarass/view-dependent-rendering-coursework/blob/master/%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8212.png)
+![]({{site.baseurl}}/https://github.com/sargarass/view-dependent-rendering-coursework/blob/master/%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8225.png)
