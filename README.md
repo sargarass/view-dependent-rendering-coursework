@@ -2,7 +2,14 @@
 Based on Carles Loop article: [Real-Time View-Dependent Rendering of Parametric Surfaces](http://research.microsoft.com/en-us/um/people/cloop/EisenEtAl2009.pdf)
 
 #System Requirements:
-GPU with cuda compute capability 2.0 and opengl 3.3 support with extensions: GL_EXT_direct_state_access, GL_NV_framebuffer_multisample_coverage
+NVIDIA GPU with 256vram, cuda compute capability 2.0 and opengl 3.3 support with extensions: GL_EXT_direct_state_access, GL_NV_framebuffer_multisample_coverage. 
+
+
+
+Compiler: gcc
+
+OS: Linux
+RAM: 1GB
 
 Libraries:
 1. GLFW
@@ -29,5 +36,31 @@ Libraries:
 ![](%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8212.png)
 ![](%D0%9E%D0%B1%D1%8A%D0%B5%D0%BA%D1%8225.png)
 
-Чем ярче цвет области, тем меньше потребовалось разбиений для полигонов в ней.
+На данной картинке чем ярче цвет области, тем меньше потребовалось разбиений для полигонов в ней.
 ![](170.png)
+
+# Сборка
+1. cmake CMakeList.txt
+2. make
+
+# Запуск
+В папке bin запустить VDRender
+
+# Управление
+- "↑", "↓" - выбор модели
+- "LAlt" - переключение режимов сглаживания: None, MSAA, CSAA
+- "[","]" - уменьшение или увеличение сглаживания.
+- "С" - добавление текущей камеры в список камер и сохранение списка камер на диск
+- "X" - загрузка списка камер с диска
+- "←", "→" - переключение между камерами
+- "F1" - включение и выключение вывода информации в консоль
+- "P" - пауза/снятие паузы (остановка рендеринга)
+- "B" - сохранение настроек
+- "V" - загрузка настроек
+# Что ещё можно настроить
+В файле Application.cpp
+```C++
+    SystemManager::getInstance()->stackAllocator.resize(512UL * 1024UL * 1024UL);
+    SystemManager::getInstance()->vdRender.init(256UL * 1024UL * 1024UL);
+```
+Данные настройки отвечают за размер кэшей для временных данных модели. Первая строчка настраивает RAM кэш, вторая GPU кэш.
