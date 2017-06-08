@@ -7,6 +7,7 @@
 #include <stack>
 #include <deque>
 #include <string>
+#include <vector>
 #include "Log.h"
 #include "Timer.h"
 #include <cuda_runtime.h>
