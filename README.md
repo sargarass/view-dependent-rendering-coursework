@@ -23,7 +23,9 @@ Problems that we not covered in the article and we solved here:
 For more information/images/tests please read [РПЗ.pdf](https://github.com/sargarass/view-dependent-rendering-coursework/blob/master/%D0%A0%D0%9F%D0%97.pdf)(in russian).
 # System Requirements:
 NVIDIA GPU with 256vram
+
 cuda compute capability 2.0
+
 opengl 3.3 support with extensions: GL_EXT_direct_state_access, GL_NV_framebuffer_multisample_coverage. 
 
 Compiler: gcc
