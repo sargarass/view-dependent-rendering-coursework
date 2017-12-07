@@ -15,7 +15,7 @@ we do not need to synchronize threads because 2 patches completely lie in one Cu
 
 Problems that we not covered in the article and we solved here:
 1. Parallesation subdivision of bezier patches (De Casteljau's algorithm in matrix form for 4x4 patches).
-2. Problem of lost pixels because of real numbers precision (were solved by extent of patch bounds in screen space by 0.5 sizes of pixel).
+2. Problem of pixels dropout because of real numbers precision (were solved by extent of patch bounds in screen space by 0.5 sizes of pixel).
 3. Same problem as above but for depth buffer (we are using [logarithmic depth buffer](http://outerra.blogspot.ru/2013/07/logarithmic-depth-buffer-optimizations.html))
 4. Realization of frustum culling
 5. Something else I didnt remember
