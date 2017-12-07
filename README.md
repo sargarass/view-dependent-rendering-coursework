@@ -10,14 +10,14 @@ So the main idea of algorithm (for Bezier 4x4 patches):
 3. If distance between each control point of patch is less than threshold then we just render quad.
 4. Else we subdivide patch into 4 patches and apply algorithm recursively.
 
-Noticed that this algorithm can be easily paralleled. We can use 1 cuda-thread per 1 patch, but if we will make many independent operations on each control point we can use 16 threads per patch (as done in this project). These operations include: backface culling test, occlusion culling of bezier patch, subdivision of bezier patch, etc. Notice, that
+Noticed that this algorithm can be easily paralleled. We can use 1 cuda-thread per 1 patch, but if we will make many independent operations on each control point we can use 16 threads per patch (as done in this project). These operations include: backface culling test, frustum culling of bezier patch, subdivision of bezier patch, etc. Notice, that
 we do not need to synchronize threads because 2 patches completely lie in one Cuda warp.
 
 Problems that we not covered in the article and we solved here:
 1. Parallesation subdivision of bezier patches (De Casteljau's algorithm in matrix form for 4x4 patches).
 2. Problem of lost pixels because of real numbers precision (were solved by extent of patch bounds in screen space by 0.5 sizes of pixel).
 3. Same problem as above but for depth buffer (we are using [logarithmic depth buffer](http://outerra.blogspot.ru/2013/07/logarithmic-depth-buffer-optimizations.html))
-4. Realization of occlusion culling
+4. Realization of frustum culling
 5. Something else I didnt remember
 
 For more information/images/tests please read [РПЗ.pdf](https://github.com/sargarass/view-dependent-rendering-coursework/blob/master/%D0%A0%D0%9F%D0%97.pdf)(in russian).
