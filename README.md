@@ -39,6 +39,7 @@ RAM: 1GB
 2. GLEW
 3. GLM
 4. CUB
+5. CUDA (nvidia-cuda-toolkit)
 
 # How to build
 1. cmake CMakeList.txt
